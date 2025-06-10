@@ -8,7 +8,9 @@ Ein Echtzeit-Handgesten-Erkennungssystem, das Computer Vision und Deep Learning 
 ## Funktionen
 
 - Echtzeit-Handgesten-Erkennung mit PyTorch und MediaPipe
-- Unterstützung für GPU-Beschleunigung für schnellere Inferenz
+- Verbesserte Datenerfassung mit Echtzeit-Visualisierung, Handpositionierung und Qualitätsprüfung (grüner/roter Rahmen)
+- Fortschrittliche Merkmalsextraktion (HOG, formbasiert, statistisch)
+- Unterstützung für GPU-Beschleunigung für schnellere Inferenz und Training
 - Hochwertige Datenerfassung mit automatischer Qualitätskontrolle
 - Umfassende Datenvorverarbeitungs- und Augmentierungs-Pipeline
 - Echtzeit-Visualisierung mit Konfidenzwerten
@@ -24,13 +26,13 @@ hand_gesture_recognition/  # Hauptverzeichnis des Projekts
 │   └── augmented/           # Erweiterter (augmentierter) Datensatz
 ├── src/                   # Quellcode-Verzeichnis
 │   ├── data_collection/     # Skripte zur Bilderfassung
-│   │   └── capture_images.py  # Skript zum Aufnehmen von Handgestenbildern
+│   │   └── capture_images.py  # Skript zum Aufnehmen von Handgestenbildern (mit visuellem Feedback)
 │   ├── preprocessing/       # Bildvorverarbeitung
 │   │   └── preprocess_images.py  # Skript zur Vorverarbeitung der Bilder
 │   ├── feature_extraction/  # Merkmalsextraktion
-│   │   └── feature_extractor.py  # Skript zur Extraktion von Merkmalen
+│   │   └── feature_extractor.py  # Skript zur Extraktion von HOG-, Form- und statistischen Merkmalen
 │   ├── models/             # Modellimplementierung
-│   │   └── model.py        # Definition des neuronalen Netzwerkmodells
+│   │   └── model.py        # Definition des neuronalen Netzwerkmodells (FFNN)
 │   ├── main.py             # Trainingsskript für das Modell
 │   └── test_gestures.py    # Skript für Echtzeit-Tests und Gestenerkennung
 ├── models/
@@ -60,7 +62,7 @@ Führen Sie das Datenerfassungsskript aus, um Handgestenbilder aufzunehmen:
 ```bash
 python src/data_collection/capture_images.py
 ```
-Befolgen Sie die Anweisungen auf dem Bildschirm, um Bilder für jede Geste aufzunehmen.
+Befolgen Sie die Anweisungen auf dem Bildschirm. Die Anwendung zeigt einen grünen Rahmen um Ihre Hand, wenn die Position gut ist, und einen roten Rahmen, wenn sie angepasst werden muss. Drücken Sie 'c' zum Aufnehmen von Bildern, wenn der Rahmen grün ist.
 
 ### 2. Training
 
@@ -70,8 +72,8 @@ python src/main.py
 ```
 Dies wird:
 - Die gesammelten Bilder vorverarbeiten und augmentieren
-- Merkmale aus den vorverarbeiteten Bildern extrahieren
-- Das PyTorch-Modell mit GPU-Beschleunigung trainieren
+- HOG-, Form- und statistische Merkmale aus den vorverarbeiteten Bildern extrahieren
+- Das PyTorch-FFNN-Modell mit GPU-Beschleunigung trainieren, mit Early Stopping und Lernraten-Scheduler
 - Den besten Modell-Checkpoint speichern
 
 ### 3. Testen
@@ -80,24 +82,24 @@ Testen Sie das trainierte Modell in Echtzeit:
 ```bash
 python src/test_gestures.py
 ```
+Das Skript zeigt die erkannte Geste, die zugehörige Aktion (z.B. "Start Musik") und die Konfidenzwerte in Echtzeit an.
 Steuerung:
 - Drücken Sie 'q' zum Beenden
-- Drücken Sie 'd' zum Umschalten des Debug-Modus (zeigt Konfidenzwerte an)
 
 ## Modellarchitektur
 
-Das System verwendet ein PyTorch-basiertes neuronales Netzwerk mit der folgenden Architektur:
-- Eingabe: Merkmale von Handgestenbildern
-- Versteckte Schichten: 512 → 256 → 128 Neuronen
+Das System verwendet ein PyTorch-basiertes Feed Forward Neuronales Netzwerk (FFNN) mit der folgenden Architektur:
+- Eingabe: Extrahierte Merkmale (HOG, Form, statistisch)
+- Versteckte Schichten: 1024 → 512 → 256 Neuronen (mit ReLU-Aktivierung, Batch-Normalisierung und Dropout)
 - Ausgabe: 3 Klassen (Daumen, Handfläche, Faust)
-- Aktivierung: ReLU mit Dropout zur Regularisierung
 - Verlustfunktion: Kreuzentropie-Verlust (Cross Entropy Loss)
 - Optimierer: Adam
+- Techniken: Lernraten-Scheduler (ReduceLROnPlateau) und Early Stopping
 
 ## Leistung
 
 Das Modell erreicht:
-- Gesamte Genauigkeit: ~77%
+- Gesamte Genauigkeit: ~77% (Bitte beachten Sie, dass dies ein Beispielwert ist. Die tatsächliche Leistung kann variieren.)
 - Beste Geste: Faust (92% Recall)
 - Echtzeit-Inferenz mit GPU-Beschleunigung
 
