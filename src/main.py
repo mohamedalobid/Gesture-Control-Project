@@ -1,86 +1,80 @@
 import os
-import cv2
 import numpy as np
-from data_collection.capture_images import HandGestureCapture
+import cv2
+from sklearn.model_selection import train_test_split
 from preprocessing.preprocess_images import ImagePreprocessor
-from feature_extraction.feature_extractor import FeatureExtractor
 from models.model import GestureClassifier
 
-def main():
-    # Create necessary directories
-    os.makedirs('data/raw', exist_ok=True)
-    os.makedirs('data/processed', exist_ok=True)
-    os.makedirs('models/saved', exist_ok=True)
+# Funktion zum Laden und Vorbereiten des Datensatzes für das Training
+def load_dataset(data_dir):
+    """Lädt und bereitet den Datensatz für das Training vor"""
+    X = []  # Liste zur Speicherung der Bilddaten
+    y = []  # Liste zur Speicherung der Labels (Gesten)
+    gesture_map = {'thumb': 0, 'palm': 1, 'fist': 2}  # Abbildung von Gestennamen auf numerische Labels
     
-    # Check if we need to collect data
-    if not os.path.exists('data/raw/thumb') or not os.listdir('data/raw/thumb'):
-        print("No training data found. Starting data collection...")
-        # Step 1: Data Collection
-        print("\nStep 1: Data Collection")
-        print("Press 'c' to capture an image, 'q' to quit")
-        capture = HandGestureCapture()
-        capture.run()
-    
-    # Step 2: Preprocessing
-    print("\nStep 2: Preprocessing")
-    preprocessor = ImagePreprocessor()
-    preprocessor.process_dataset()
-    
-    # Step 3: Feature Extraction
-    print("\nStep 3: Feature Extraction")
-    extractor = FeatureExtractor()
-    
-    # Load and process all images
-    X = []  # Features
-    y = []  # Labels
-    
-    for gesture_idx, gesture in enumerate(['thumb', 'palm', 'fist']):
-        gesture_dir = os.path.join('data/processed', gesture)
-        for filename in os.listdir(gesture_dir):
-            if not filename.endswith(('.jpg', '.jpeg', '.png')):
+    print("Datensatz wird geladen...")
+    # Iteration durch jeden Gestenordner im Datenverzeichnis
+    for gesture in os.listdir(data_dir):
+        gesture_dir = os.path.join(data_dir, gesture)  # Pfad zum aktuellen Gestenordner
+        # Überspringen, wenn es kein Verzeichnis ist
+        if not os.path.isdir(gesture_dir):
+            continue
+            
+        print(f"Lade {gesture}-Gesten...")
+        # Iteration durch jede Bilddatei im Gestenordner
+        for img_name in os.listdir(gesture_dir):
+            # Überspringen, wenn es keine Bilddatei ist
+            if not img_name.endswith(('.jpg', '.jpeg', '.png')):
                 continue
             
-            # Load image
-            image_path = os.path.join(gesture_dir, filename)
-            image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+            img_path = os.path.join(gesture_dir, img_name)  # Vollständiger Pfad zum Bild
+            image = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)  # Bild als Graustufen laden
             
+            # Überspringen, wenn das Bild nicht geladen werden konnte
             if image is None:
-                print(f"Failed to read image: {image_path}")
                 continue
             
-            # Normalize image
-            image = image / 255.0
-            
-            # Extract features
-            features = extractor.extract_all_features(image)
-            X.append(features)
-            y.append(gesture_idx)
+            # Normalisiere Pixelwerte auf den Bereich [0, 1]
+            image = image.astype(np.float32) / 255.0
+            X.append(image)  # Bild zu den Feature-Daten hinzufügen
+            y.append(gesture_map[gesture])  # Label zur Liste der Labels hinzufügen
     
-    X = np.array(X)
-    y = np.array(y)
-    
-    # Step 4: Model Training
-    print("\nStep 4: Model Training")
-    
-    # Train different models
-    models = ['svm', 'random_forest', 'knn', 'decision_tree']
-    best_model = None
-    best_accuracy = 0
-    
-    for model_type in models:
-        print(f"\nTraining {model_type} model...")
-        classifier = GestureClassifier(model_type=model_type)
-        classifier.train(X, y)
-        
-        # Save the model
-        model_path = f'models/saved/{model_type}'
-        classifier.save_model(model_path)
-        
-        # For testing, we'll use the first model as default
-        if best_model is None:
-            best_model = model_type
-    
-    print(f"\nAll models trained and saved. Using {best_model} as default model.")
+    return np.array(X), np.array(y)  # Rückgabe der Bilddaten und Labels als NumPy-Arrays
 
+# Hauptfunktion des Programms
+def main():
+    # Erstelle notwendige Verzeichnisse, falls sie nicht existieren
+    os.makedirs('Gesture Control/data/raw', exist_ok=True)  # Rohe Bilddaten
+    os.makedirs('Gesture Control/data/processed', exist_ok=True)  # Verarbeitete Bilddaten
+    os.makedirs('Gesture Control/models/saved', exist_ok=True)  # Speicherort für trainierte Modelle
+    
+    # Initialisiere und führe den Bildvorverarbeiter aus
+    preprocessor = ImagePreprocessor()  # Erstelle eine Instanz des Bildvorverarbeiters
+    preprocessor.preprocess_dataset()  # Vorverarbeite den Datensatz
+    preprocessor.augment_dataset()  # Erweitere den Datensatz (Data Augmentation)
+    
+    # Lade den vorverarbeiteten Datensatz
+    X, y = load_dataset('Gesture Control/data/processed')  # Lade die vorverarbeiteten Bilder und Labels
+    
+    # Überprüfen, ob Daten gefunden wurden
+    if len(X) == 0:
+        print("Keine Daten gefunden! Bitte sammeln Sie zuerst Trainingsdaten.")
+        return  # Programm beenden, wenn keine Daten vorhanden sind
+    
+    print(f"\n{len(X)} Bilder geladen")
+    print(f"Klassenverteilung: {np.bincount(y)}")  # Zeigt die Anzahl der Bilder pro Klasse
+    
+    # Teile die Daten in Trainings- und Validierungssets auf
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42) # 80% Training, 20% Validierung
+    
+    # Initialisiere und trainiere das Modell
+    model = GestureClassifier()  # Erstelle eine Instanz des Gestenklassifizierers
+    model.train_model(X_train, y_train, batch_size=32, epochs=200) # Trainiere das Modell mit den Trainingsdaten
+    
+    # Speichere das beste Modell
+    model.save_model('Gesture Control/models/saved/best_model')  # Speichere das trainierte Modell
+    print("\nModell erfolgreich gespeichert!")
+
+# Überprüfen, ob das Skript direkt ausgeführt wird
 if __name__ == "__main__":
-    main() 
+    main()  # Rufe die Hauptfunktion auf, um das Programm zu starten 

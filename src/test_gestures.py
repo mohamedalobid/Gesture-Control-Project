@@ -1,216 +1,96 @@
 import cv2
 import numpy as np
-from preprocessing.preprocess_images import ImagePreprocessor
-from feature_extraction.feature_extractor import FeatureExtractor
+import torch
 from models.model import GestureClassifier
+from preprocessing.preprocess_images import ImagePreprocessor
 
-def detect_hand(frame):
-    # Convert to YCrCb color space
-    ycrcb = cv2.cvtColor(frame, cv2.COLOR_BGR2YCR_CB)
-    
-    # Define skin color range in YCrCb
-    min_YCrCb = np.array([0, 133, 77], np.uint8)
-    max_YCrCb = np.array([255, 173, 127], np.uint8)
-    
-    # Create a binary mask for skin color
-    skin_mask = cv2.inRange(ycrcb, min_YCrCb, max_YCrCb)
-    
-    # Apply morphological operations to clean up the mask
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
-    skin_mask = cv2.erode(skin_mask, kernel, iterations=2)
-    skin_mask = cv2.dilate(skin_mask, kernel, iterations=2)
-    
-    # Apply Gaussian blur to smooth the mask
-    skin_mask = cv2.GaussianBlur(skin_mask, (3, 3), 0)
-    
-    # Find contours in the mask
-    contours, _ = cv2.findContours(skin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    if not contours:
-        return None, None
-    
-    # Find the largest contour (assumed to be the hand)
-    largest_contour = max(contours, key=cv2.contourArea)
-    
-    # Get the bounding box of the hand
-    x, y, w, h = cv2.boundingRect(largest_contour)
-    
-    # Add some padding around the hand
-    padding = 20
-    x = max(0, x - padding)
-    y = max(0, y - padding)
-    w = min(frame.shape[1] - x, w + 2 * padding)
-    h = min(frame.shape[0] - y, h + 2 * padding)
-    
-    # Extract the hand region
-    hand_region = frame[y:y+h, x:x+w]
-    
-    # Create a mask for the hand region
-    hand_mask = skin_mask[y:y+h, x:x+w]
-    
-    # Create a white background
-    white_bg = np.ones_like(hand_region) * 255
-    
-    # Use the mask to combine the hand with white background
-    hand_segmented = cv2.bitwise_and(hand_region, hand_region, mask=hand_mask)
-    hand_segmented = cv2.bitwise_or(hand_segmented, white_bg, mask=cv2.bitwise_not(hand_mask))
-    
-    return hand_segmented, (x, y, w, h)
-
+# Hauptfunktion des Testskripts
 def main():
-    # Available models with their accuracies
-    models = {
-        '1': ('svm', 'SVM (97% accuracy)'),
-        '2': ('random_forest', 'Random Forest (95% accuracy)'),
-        '3': ('knn', 'KNN (94% accuracy)'),
-        '4': ('decision_tree', 'Decision Tree (89% accuracy)')
+    # Initialisiere das Modell
+    print("Initialisiere GestureClassifier...")
+    model = GestureClassifier()  # Erstelle eine Instanz des Gestenklassifizierers
+    model.load_model('Gesture Control/models/saved/best_model')  # Lade das trainierte Modell
+    model.eval()  # Setze das Modell in den Evaluationsmodus
+    
+    # Initialisiere den Vorverarbeiter
+    print("Initialisiere ImagePreprocessor...")
+    preprocessor = ImagePreprocessor()  # Erstelle eine Instanz des Bildvorverarbeiters
+    
+    # Kamera initialisieren
+    print("Versuche Kamera zu öffnen...")
+    cap = cv2.VideoCapture(0)  # Video-Capture-Objekt initialisieren (Webcam)
+    # Überprüfen, ob die Kamera geöffnet werden konnte
+    if not cap.isOpened():
+        print("Fehler: Kamera konnte nicht geöffnet werden. Bitte überprüfen Sie die Kamerakonnektivität und Berechtigungen.")
+        return  # Programm beenden, wenn Kamera nicht verfügbar
+    print("Kamera erfolgreich geöffnet.")
+    
+    # Gesten-Labels und zugehörige Aktionen
+    gesture_labels = ['thumb', 'palm', 'fist']  # Liste der erkannten Gesten
+    gesture_actions = {
+        'thumb': 'Start Musik',
+        'palm': 'Pause Musik',
+        'fist': 'Stop Musik'
     }
     
-    # Print model options
-    print("\nAvailable models:")
-    for key, (model_type, description) in models.items():
-        print(f"{key}. {description}")
+    print("\nGestenerkennung gestartet!")
+    print("Drücken Sie 'q' zum Beenden")
     
-    # Get user choice
-    while True:
-        choice = input("\nSelect a model (1-4): ")
-        if choice in models:
-            model_type, _ = models[choice]
-            break
-        else:
-            print("Please enter a number between 1 and 4")
-    
-    # Load the selected model
-    print(f"\nLoading {model_type} model...")
-    classifier = GestureClassifier(model_type=model_type)
-    classifier.load_model(f'models/saved/{model_type}')
-    print("Model loaded successfully!")
-    
-    # Initialize components
-    cap = cv2.VideoCapture(0)
-    preprocessor = ImagePreprocessor()
-    extractor = FeatureExtractor()
-    
-    # For smoothing predictions
-    prediction_history = []
-    history_size = 5
-    
-    print("\nStarting real-time gesture recognition...")
-    print("Press 'q' to quit")
-    print("Press 'm' to switch models")
-    print("Press 'd' to toggle debug mode")
-    
-    debug_mode = True  # Start with debug mode on
-    
-    while True:
-        # Read frame from webcam
-        ret, frame = cap.read()
+    while True:  # Endlosschleife für die Echtzeit-Erkennung
+        ret, frame = cap.read()  # Frame von der Kamera lesen
         if not ret:
-            print("Failed to grab frame")
-            break
+            print("Fehler: Konnte keinen Frame von der Kamera lesen. Beende.")
+            break  # Schleife beenden, wenn kein Frame gelesen werden konnte
         
-        # Mirror the frame horizontally
+        # Frame horizontal spiegeln für eine spätere Selfie-Ansicht
         frame = cv2.flip(frame, 1)
         
-        # Create a copy for display
-        display_frame = frame.copy()
+        # Frame vorverarbeiten
+        processed = preprocessor.preprocess_image(frame)  # Bild vorverarbeiten
         
-        # Detect and segment hand
-        hand_segmented, hand_bbox = detect_hand(frame)
+        gesture_name = None  # Name der erkannten Geste
+        action = None  # Zugehörige Aktion
+        confidence = 0.0  # Konfidenz der Erkennung
         
-        if hand_segmented is not None:
-            # Draw rectangle around detected hand
-            x, y, w, h = hand_bbox
-            cv2.rectangle(display_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-            
-            # Preprocess the segmented hand
-            processed = preprocessor.preprocess_image(hand_segmented)
-            
-            if processed is not None:
-                # Extract features
-                features = extractor.extract_all_features(processed)
-                
-                # Get prediction and probability
-                prediction = classifier.predict([features])[0]
-                probabilities = classifier.model.predict_proba(classifier.scaler.transform([features]))[0]
-                confidence = np.max(probabilities)
-                
-                # Map prediction to gesture name
-                gesture_names = ['thumb', 'palm', 'fist']
-                gesture_name = gesture_names[prediction]
-                
-                # Add to history
-                prediction_history.append(gesture_name)
-                if len(prediction_history) > history_size:
-                    prediction_history.pop(0)
-                
-                # Get most common prediction
-                if prediction_history:
-                    gesture_name = max(set(prediction_history), key=prediction_history.count)
-                
-                # Add prediction to display
-                cv2.putText(display_frame, f"Model: {model_type}", (10, 30),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                cv2.putText(display_frame, f"Gesture: {gesture_name}", (10, 70),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                
-                # Add action based on gesture
-                if gesture_name == 'thumb':
-                    action = "Start Music"
-                elif gesture_name == 'palm':
-                    action = "Stop Music"
-                elif gesture_name == 'fist':
-                    action = "Pause Music"
-                else:
-                    action = "No Action"
-                
-                cv2.putText(display_frame, f"Action: {action}", (10, 110),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                
-                # Debug information
-                if debug_mode:
-                    # Show confidence for each gesture
-                    y_pos = 150
-                    for i, (name, prob) in enumerate(zip(gesture_names, probabilities)):
-                        color = (0, 255, 0) if name == gesture_name else (0, 0, 255)
-                        cv2.putText(display_frame, f"{name}: {prob:.2f}", (10, y_pos),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-                        y_pos += 30
-                    
-                    # Show prediction history
-                    history_text = "History: " + " -> ".join(prediction_history)
-                    cv2.putText(display_frame, history_text, (10, y_pos + 30),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    
-                    # Show segmented hand
-                    if hand_segmented is not None:
-                        # Resize for display
-                        display_size = (200, 200)
-                        hand_display = cv2.resize(hand_segmented, display_size)
-                        # Place in top-right corner
-                        display_frame[10:10+display_size[1], 
-                                    display_frame.shape[1]-10-display_size[0]:display_frame.shape[1]-10] = hand_display
+        if processed is not None:  # Wenn ein vorverarbeitetes Bild vorhanden ist
+            # Normalisiere Pixelwerte auf den Bereich [0, 1]
+            processed = processed.astype(np.float32) / 255.0
+            # Glätten für FFNN (Feed Forward Neural Network)
+            processed_flat = processed.flatten().reshape(1, -1)  # Bild glätten und Form anpassen
+            with torch.no_grad():  # Deaktiviere die Gradientenberechnung
+                outputs = model(torch.FloatTensor(processed_flat))  # Vorhersage mit dem Modell
+                probabilities = torch.softmax(outputs, dim=1)[0]  # Wahrscheinlichkeiten der Klassen
+                predicted_class = torch.argmax(probabilities).item()  # Klasse mit der höchsten Wahrscheinlichkeit
+                confidence = probabilities[predicted_class].item()  # Konfidenzwert
+                gesture_name = gesture_labels[predicted_class]  # Gestenname
+                action = gesture_actions[gesture_name]  # Zugehörige Aktion
         
-        # Display the frame
-        cv2.imshow('Gesture Recognition', display_frame)
+        # Geste und Aktion anzeigen
+        if gesture_name is not None:
+            cv2.putText(frame, f"Geste: {gesture_name}", (10, 50),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)  # Geste anzeigen
+            cv2.putText(frame, f"Aktion: {action}", (10, 100),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 0), 3)  # Aktion anzeigen
+            cv2.putText(frame, f"Konfidenz: {confidence:.2f}", (10, 150),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)  # Konfidenz anzeigen
+        else:
+            cv2.putText(frame, "Zeigen Sie Ihre Handgeste", (10, 50),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)  # Hinweis anzeigen
         
-        # Check for key presses
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord('q'):
-            break
-        elif key == ord('m'):
-            # Switch models
-            cap.release()
-            cv2.destroyAllWindows()
-            main()  # Restart with model selection
-            return
-        elif key == ord('d'):
-            debug_mode = not debug_mode
-            print(f"Debug mode: {'ON' if debug_mode else 'OFF'}")
+        # Frame anzeigen
+        cv2.imshow('Gestenerkennung', frame)  # Frame im Fenster anzeigen
+        print("cv2.imshow aufgerufen.")
+        
+        # Tastendrücke verarbeiten
+        key = cv2.waitKey(30) & 0xFF  # Auf Tastendruck warten
+        if key == ord('q'):  # Wenn 'q' gedrückt wird
+            break  # Schleife beenden
     
-    # Cleanup
-    cap.release()
-    cv2.destroyAllWindows()
+    # Aufräumen
+    print("Kamera wird freigegeben und Fenster werden zerstört...")
+    cap.release()  # Kamera freigeben
+    cv2.destroyAllWindows()  # Alle OpenCV-Fenster schließen
 
+# Überprüfen, ob das Skript direkt ausgeführt wird
 if __name__ == "__main__":
-    main()
+    main()  # Rufe die Hauptfunktion auf, um das Programm zu starten
